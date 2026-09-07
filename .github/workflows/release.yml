@@ -186,13 +186,6 @@ jobs:
           path: dist/tantivy-${{ matrix.target }}
           key: tantivy-${{ matrix.target }}-${{ steps.tantivy.outputs.version }}
 
-      - name: Install musl toolchain
-        if: matrix.musl_cc != ''
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends musl-tools
-          sudo ln -sf "$(command -v musl-gcc)" "/usr/local/bin/${{ matrix.musl_cc }}"
-
       - name: Install mingw toolchain
         if: matrix.target == 'windows-amd64'
         run: |
@@ -200,6 +193,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
 
       - name: Build
+        if: matrix.musl_cc == ''
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           COMMIT: ${{ needs.prepare.outputs.commit }}
@@ -207,6 +201,33 @@ jobs:
           GIT_STATE: clean
         run: |
           make build-${{ matrix.target }}
+          ls -la dist/
+
+      - name: Build static musl binary
+        if: matrix.musl_cc != ''
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          BUILD_TIME: ${{ needs.prepare.outputs.build-time }}
+          GIT_STATE: clean
+          MUSL_CC: ${{ matrix.musl_cc }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          GO_VERSION="$(go env GOVERSION)"
+          GO_MOD_CACHE="$(go env GOMODCACHE)"
+          GO_BUILD_CACHE="$(go env GOCACHE)"
+          mkdir -p "$GO_MOD_CACHE" "$GO_BUILD_CACHE"
+          docker run --rm \
+            -v "$PWD:/src" -w /src \
+            -v "$GO_MOD_CACHE:/go/pkg/mod" \
+            -v "$GO_BUILD_CACHE:/root/.cache/go-build" \
+            -e VERSION -e COMMIT -e BUILD_TIME -e GIT_STATE -e MUSL_CC -e TARGET \
+            "golang:${GO_VERSION#go}-alpine" \
+            sh -c 'apk add --no-cache gcc musl-dev make curl tar git &&
+                   ln -sf /usr/bin/gcc "/usr/local/bin/${MUSL_CC}" &&
+                   make "build-${TARGET}"'
+          sudo chown -R "$(id -u):$(id -g)" "$GO_MOD_CACHE" "$GO_BUILD_CACHE" dist
           ls -la dist/
 
       - name: Compress binary
