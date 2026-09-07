@@ -225,6 +225,7 @@ jobs:
             -e VERSION -e COMMIT -e BUILD_TIME -e GIT_STATE -e MUSL_CC -e TARGET \
             "golang:${GO_VERSION#go}-alpine" \
             sh -c 'apk add --no-cache gcc musl-dev make curl tar git &&
+                   git config --global --add safe.directory /src &&
                    ln -sf /usr/bin/gcc "/usr/local/bin/${MUSL_CC}" &&
                    make "build-${TARGET}"'
           sudo chown -R "$(id -u):$(id -g)" "$GO_MOD_CACHE" "$GO_BUILD_CACHE" dist
