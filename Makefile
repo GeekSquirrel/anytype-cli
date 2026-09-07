@@ -72,7 +72,7 @@ $(TANTIVY_MARKER):
 	@rm -rf $(TANTIVY_LIB_PATH) $(TANTIVY_LIB_PATH).tar.gz
 	@mkdir -p $(TANTIVY_LIB_PATH)
 	@echo "Downloading tantivy library $(TANTIVY_VERSION) for $(GOOS)/$(GOARCH)..."
-	@curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+	@curl -fsSL --retry 5 --retry-all-errors \
 		-o $(TANTIVY_LIB_PATH).tar.gz "$(TANTIVY_URL)"
 	@tar xzf $(TANTIVY_LIB_PATH).tar.gz -C $(TANTIVY_LIB_PATH)
 	@rm -f $(TANTIVY_LIB_PATH).tar.gz
