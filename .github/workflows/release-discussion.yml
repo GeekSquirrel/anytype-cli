@@ -146,6 +146,11 @@ jobs:
       patch-status: ${{ steps.patch.outputs.status }}
 
     steps:
+      - name: Checkout fork (patches)
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: patches
+
       - name: Checkout upstream CLI at target version
         uses: actions/checkout@v6
         with:
