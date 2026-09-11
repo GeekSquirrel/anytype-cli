@@ -1,13 +1,16 @@
 name: Patched release (discussion-id)
 
 # Builds a patched anytype-cli image for self-hosted use before the
-# discussion-id API change is merged upstream. Watches the version referenced
-# by anyproto/any-sync-dockercompose and publishes vX.Y.Z-discussion.N images
-# to ghcr.io whenever a new upstream CLI version appears.
+# discussion-id API change is merged upstream. Monitoring source: new
+# releases of upstream anytype-cli (the compose repo's ANYTYPE_CLI_VERSION
+# is followed only if it ever pins a concrete version instead of "latest").
+# Publishes vX.Y.Z-discussion.N images to ghcr.io.
 
 on:
   schedule:
-    - cron: "17 5 * * *"
+    # Poll upstream releases twice an hour; a run with nothing new finishes
+    # in seconds.
+    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       cli_version:
@@ -61,22 +64,32 @@ jobs:
 
           CLI_VERSION="${CLI_VERSION_INPUT}"
 
-          # 1) Explicit input wins. 2) Otherwise honor a pinned version from the
-          # official compose repo. 3) "latest" (or empty) resolves to the newest
-          # stable tag of upstream anytype-cli.
+          # Monitoring source:
+          # - A pinned version in the official compose repo wins (build exactly
+          #   that version).
+          # - "latest" (or unset) means follow upstream releases: the newest
+          #   published release of anyproto/anytype-cli is the trigger; each
+          #   new release gets its own -discussion.N build.
           if [ -z "${CLI_VERSION}" ]; then
             PINNED="$(curl -fsSL "https://raw.githubusercontent.com/${COMPOSE_REPO}/main/.env.example" \
               | grep -E '^ANYTYPE_CLI_VERSION=' | head -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
-            echo "any-sync-dockercompose .env.example pins: ANYTYPE_CLI_VERSION=${PINNED:-<unset>}"
             if [ -n "${PINNED}" ] && [ "${PINNED}" != "latest" ]; then
+              echo "any-sync-dockercompose pins ANYTYPE_CLI_VERSION=${PINNED}; building that version"
               CLI_VERSION="${PINNED}"
+            else
+              echo "any-sync-dockercompose .env.example: ANYTYPE_CLI_VERSION=${PINNED:-<unset>} -> following upstream releases"
             fi
           fi
 
           if [ -z "${CLI_VERSION}" ]; then
-            CLI_VERSION="$(git ls-remote --tags "https://github.com/${UPSTREAM_CLI_REPO}.git" 'refs/tags/v*' \
+            CLI_VERSION="$(gh api "repos/${UPSTREAM_CLI_REPO}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          fi
+
+          if [ -z "${CLI_VERSION}" ]; then
+            # Fallback if the Releases API is unavailable: newest stable vX.Y.Z tag.
+            CLI_VERSION="$(git ls-remote --tags "https://github.com/${UPSTREAM_CLI_REPO}.git" \
               | sed 's|.*refs/tags/||' | grep -v '\^{}' \
-              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)"
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)"
           fi
 
           if [ -z "${CLI_VERSION}" ]; then
@@ -87,9 +100,10 @@ jobs:
           git ls-remote --exit-code "https://github.com/${UPSTREAM_CLI_REPO}.git" "refs/tags/${CLI_VERSION}" > /dev/null \
             || { echo "::error::Tag ${CLI_VERSION} does not exist on ${UPSTREAM_CLI_REPO}"; exit 1; }
 
-          # Heart version required by this CLI release
+          # Heart version required by this CLI release (go.mod require lines
+          # are tab-indented, so no start-of-line anchor here)
           HEART_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/${UPSTREAM_CLI_REPO}/${CLI_VERSION}/go.mod" \
-            | grep -E '^github\.com/anyproto/anytype-heart v' | awk '{print $2}')"
+            | grep -E '^[[:space:]]*github\.com/anyproto/anytype-heart v' | awk '{print $2}')"
           if [ -z "${HEART_VERSION}" ]; then
             echo "::error::Could not read anytype-heart version from ${UPSTREAM_CLI_REPO}@${CLI_VERSION} go.mod"
             exit 1

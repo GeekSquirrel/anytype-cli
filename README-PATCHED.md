@@ -20,8 +20,9 @@ CLI 把 `anytype-heart` 作为 Go 库引入并直接复用其 `core/api` HTTP �
 
 ## release-discussion.yml 工作方式
 
-1. 每天（cron）或手动（workflow_dispatch）解析要构建的 CLI 版本：
-   手动输入 > 官方 [any-sync-dockercompose](https://github.com/anyproto/any-sync-dockercompose) `.env.example` 中的 `ANYTYPE_CLI_VERSION`（值为 `latest` 时取上游 anytype-cli 最新稳定 tag）。
+1. 每 30 分钟（cron）或手动（workflow_dispatch）解析要构建的 CLI 版本：
+   手动输入 > 官方 [any-sync-dockercompose](https://github.com/anyproto/any-sync-dockercompose)
+   `.env.example` 中钉住的具体版本 > **上游 anytype-cli 最新已发布的 release**（`.env` 为 `latest` 时的默认监控源，Releases API 查询，不含 prerelease）。
 2. 若该版本已有 `vX.Y.Z-discussion.N` tag 则跳过（`force=true` 可强制追加新编号）。
 3. 检出上游 CLI tag + 检出本 fork 的 heart 对应版本，应用补丁
    （已包含于上游则自动跳过补丁；上下文漂移时用 `git apply -3` 兜底；彻底失配则报错等待手动 rebase）。
