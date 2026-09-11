@@ -11,12 +11,12 @@ CLI 把 `anytype-heart` 作为 Go 库引入并直接复用其 `core/api` HTTP �
 
 | 文件 | 作用 |
 |---|---|
-| `patches/anytype-heart-discussion-id.patch` | GO-3132 补丁，基线记录在 `patches/heart-patch-base`（当前 `v0.50.20`） |
+| `patches/anytype-heart-discussion-id.patch` | 补丁，基线记录在 `patches/heart-patch-base`（当前 `v0.50.20`）：① GO-3132 discussionId API；② v1 ChatMessage 暴露 blocks（对齐桌面端块结构消息，桌面端发的消息不再读出空文本） |
 | `.github/workflows/release-discussion.yml` | 监控上游版本并自动构建发布补丁镜像 |
 | `.github/workflows/release.yml` | 与上游一致，仅禁用 tag 触发（避免与补丁 tag 冲突）并移除 Docker Hub / Slack 步骤（fork 无对应 secrets） |
 
-补丁的可追溯源码分支：[GeekSquirrel/anytype-heart `v0.50.20-discussion-id`](https://github.com/GeekSquirrel/anytype-heart/tree/v0.50.20-discussion-id)
-（GO-3132 提交移植到 CLI 依赖的 heart v0.50.20 上）。
+补丁的可追溯源码分支：[GeekSquirrel/anytype-heart `GO-3132-v0.50.20-discussion-id`](https://github.com/GeekSquirrel/anytype-heart/tree/GO-3132-v0.50.20-discussion-id)
+（GO-3132 提交 + blocks 暴露，移植到 CLI 依赖的 heart v0.50.20 上）。
 
 ## release-discussion.yml 工作方式
 
