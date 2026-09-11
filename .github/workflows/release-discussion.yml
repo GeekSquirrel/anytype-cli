@@ -1,0 +1,333 @@
+name: Patched release (discussion-id)
+
+# Builds a patched anytype-cli image for self-hosted use before the
+# discussion-id API change is merged upstream. Watches the version referenced
+# by anyproto/any-sync-dockercompose and publishes vX.Y.Z-discussion.N images
+# to ghcr.io whenever a new upstream CLI version appears.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: "Upstream anytype-cli version to build (e.g. v0.3.7). Empty = auto-detect from any-sync-dockercompose."
+        required: false
+        default: ""
+      force:
+        description: "Build a new -discussion.N even if one already exists for this version"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: discussion-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_CLI_REPO: anyproto/anytype-cli
+  COMPOSE_REPO: anyproto/any-sync-dockercompose
+  HEART_REPO: GeekSquirrel/anytype-heart
+
+jobs:
+  prepare:
+    name: Resolve version to build
+    runs-on: ubuntu-latest
+    outputs:
+      cli-version: ${{ steps.resolve.outputs.cli_version }}
+      heart-version: ${{ steps.resolve.outputs.heart_version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      skip: ${{ steps.resolve.outputs.skip }}
+      patch-status: ${{ steps.resolve.outputs.patch_status }}
+
+    steps:
+      - name: Checkout fork (patches + workflow)
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+
+      - name: Resolve upstream CLI version
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLI_VERSION_INPUT: ${{ inputs.cli_version }}
+          FORCE: ${{ inputs.force || 'false' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CLI_VERSION="${CLI_VERSION_INPUT}"
+
+          # 1) Explicit input wins. 2) Otherwise honor a pinned version from the
+          # official compose repo. 3) "latest" (or empty) resolves to the newest
+          # stable tag of upstream anytype-cli.
+          if [ -z "${CLI_VERSION}" ]; then
+            PINNED="$(curl -fsSL "https://raw.githubusercontent.com/${COMPOSE_REPO}/main/.env.example" \
+              | grep -E '^ANYTYPE_CLI_VERSION=' | head -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
+            echo "any-sync-dockercompose .env.example pins: ANYTYPE_CLI_VERSION=${PINNED:-<unset>}"
+            if [ -n "${PINNED}" ] && [ "${PINNED}" != "latest" ]; then
+              CLI_VERSION="${PINNED}"
+            fi
+          fi
+
+          if [ -z "${CLI_VERSION}" ]; then
+            CLI_VERSION="$(git ls-remote --tags "https://github.com/${UPSTREAM_CLI_REPO}.git" 'refs/tags/v*' \
+              | sed 's|.*refs/tags/||' | grep -v '\^{}' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)"
+          fi
+
+          if [ -z "${CLI_VERSION}" ]; then
+            echo "::error::Could not resolve an upstream anytype-cli version"
+            exit 1
+          fi
+
+          git ls-remote --exit-code "https://github.com/${UPSTREAM_CLI_REPO}.git" "refs/tags/${CLI_VERSION}" > /dev/null \
+            || { echo "::error::Tag ${CLI_VERSION} does not exist on ${UPSTREAM_CLI_REPO}"; exit 1; }
+
+          # Heart version required by this CLI release
+          HEART_VERSION="$(curl -fsSL "https://raw.githubusercontent.com/${UPSTREAM_CLI_REPO}/${CLI_VERSION}/go.mod" \
+            | grep -E '^github\.com/anyproto/anytype-heart v' | awk '{print $2}')"
+          if [ -z "${HEART_VERSION}" ]; then
+            echo "::error::Could not read anytype-heart version from ${UPSTREAM_CLI_REPO}@${CLI_VERSION} go.mod"
+            exit 1
+          fi
+
+          # Next -discussion.N suffix for this CLI version
+          LAST_N="$(git ls-remote --tags origin "refs/tags/${CLI_VERSION}-discussion.*" \
+            | sed 's|.*refs/tags/||' | grep -v '\^{}' \
+            | grep -oE 'discussion\.[0-9]+$' | grep -oE '[0-9]+$' | sort -n | tail -n1 || true)"
+          if [ -n "${LAST_N}" ] && [ "${FORCE}" != "true" ]; then
+            echo "${CLI_VERSION} already patched as ${CLI_VERSION}-discussion.${LAST_N}; nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            NEXT_N=$(( ${LAST_N:-0} + 1 ))
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "tag=${CLI_VERSION}-discussion.${NEXT_N}" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "cli_version=${CLI_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "heart_version=${HEART_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved: cli=${CLI_VERSION} heart=${HEART_VERSION}"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: linux-amd64
+            os: ubuntu-latest
+            musl_cc: x86_64-linux-musl-gcc
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+            musl_cc: aarch64-linux-musl-gcc
+
+    outputs:
+      patch-status: ${{ steps.patch.outputs.status }}
+
+    steps:
+      - name: Checkout upstream CLI at target version
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.UPSTREAM_CLI_REPO }}
+          ref: ${{ needs.prepare.outputs.cli-version }}
+          path: cli-src
+
+      - name: Checkout patched anytype-heart
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.HEART_REPO }}
+          ref: ${{ needs.prepare.outputs.heart-version }}
+          path: heart-src
+
+      - name: Apply discussion-id patch to anytype-heart
+        id: patch
+        working-directory: heart-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH="../patches/anytype-heart-discussion-id.patch"
+          BASE="$(cat ../patches/heart-patch-base 2>/dev/null || true)"
+
+          if git apply --check "${PATCH}" 2>/dev/null; then
+            git apply "${PATCH}"
+            echo "status=applied" >> "$GITHUB_OUTPUT"
+          elif git apply --check --reverse "${PATCH}" 2>/dev/null; then
+            echo "::notice::discussion-id change is already present in anytype-heart ${HEART_VERSION}; building unpatched"
+            echo "status=already-in-upstream" >> "$GITHUB_OUTPUT"
+          else
+            # Context drifted (heart moved on). Pull the patch's base blobs so
+            # git apply -3 can do a three-way merge.
+            if [ -n "${BASE}" ]; then
+              git fetch --depth=1 origin "refs/tags/${BASE}:refs/tags/${BASE}" || true
+            fi
+            if git apply -3 "${PATCH}"; then
+              echo "status=applied-3way" >> "$GITHUB_OUTPUT"
+            else
+              echo "::error::Patch does not apply to anytype-heart ${HEART_VERSION}. Rebase patches/anytype-heart-discussion-id.patch (base: ${BASE:-see patches dir})."
+              exit 1
+            fi
+          fi
+        env:
+          HEART_VERSION: ${{ needs.prepare.outputs.heart-version }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cli-src/go.mod
+
+      - name: Point anytype-heart at the patched checkout
+        working-directory: cli-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          go mod edit -replace github.com/anyproto/anytype-heart=../heart-src
+          go mod tidy
+          grep -A1 '^replace' go.mod
+
+      - name: Stamp version
+        id: stamp
+        shell: bash
+        run: |
+          echo "go_version=$(cd cli-src && go env GOVERSION)" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git -C cli-src rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u '+%Y-%m-%d %H:%M:%S')" >> "$GITHUB_OUTPUT"
+
+      - name: Build static musl binary
+        working-directory: cli-src
+        env:
+          VERSION: ${{ needs.prepare.outputs.tag }}
+          COMMIT: ${{ steps.stamp.outputs.commit }}
+          BUILD_TIME: ${{ steps.stamp.outputs.build_time }}
+          GIT_STATE: clean
+          MUSL_CC: ${{ matrix.musl_cc }}
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          GO_VERSION="${{ steps.stamp.outputs.go_version }}"
+          GO_MOD_CACHE="$(go env GOMODCACHE)"
+          GO_BUILD_CACHE="$(go env GOCACHE)"
+          mkdir -p "$GO_MOD_CACHE" "$GO_BUILD_CACHE"
+          docker run --rm \
+            -v "$PWD:/src" -w /src \
+            -v "$GITHUB_WORKSPACE/heart-src:/heart-src" \
+            -v "$GO_MOD_CACHE:/go/pkg/mod" \
+            -v "$GO_BUILD_CACHE:/root/.cache/go-build" \
+            -e VERSION -e COMMIT -e BUILD_TIME -e GIT_STATE -e MUSL_CC -e TARGET \
+            "golang:${GO_VERSION#go}-alpine" \
+            sh -c 'apk add --no-cache gcc musl-dev make curl tar git &&
+                   git config --global --add safe.directory /src &&
+                   ln -sf /usr/bin/gcc "/usr/local/bin/${MUSL_CC}" &&
+                   make "build-${TARGET}"'
+          sudo chown -R "$(id -u):$(id -g)" "$GO_MOD_CACHE" "$GO_BUILD_CACHE" dist
+          ls -la dist/
+
+      - name: Compress binary
+        env:
+          VERSION: ${{ needs.prepare.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        working-directory: cli-src/dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "anytype-${TARGET}" anytype
+          tar czf "../../anytype-cli-${VERSION}-${TARGET}.tar.gz" anytype
+          cd ..
+          ls -la ../anytype-cli-*.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: anytype-cli-${{ matrix.target }}
+          path: anytype-cli-*.tar.gz
+
+  publish:
+    name: Publish image and release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout upstream CLI (Dockerfile)
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.UPSTREAM_CLI_REPO }}
+          ref: ${{ needs.prepare.outputs.cli-version }}
+          sparse-checkout: Dockerfile
+          sparse-checkout-cone-mode: false
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: anytype-cli-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: Extract linux binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf artifacts/anytype-cli-${{ needs.prepare.outputs.tag }}-linux-amd64.tar.gz
+          mv anytype anytype-linux-amd64
+          tar -xzf artifacts/anytype-cli-${{ needs.prepare.outputs.tag }}-linux-arm64.tar.gz
+          mv anytype anytype-linux-arm64
+          ls -la anytype-linux-*
+
+      - name: Compute lowercase image name
+        id: image
+        shell: bash
+        run: |
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "name=ghcr.io/${OWNER}/anytype-cli" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.tag }}
+            ${{ steps.image.outputs.name }}:discussion
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=anytype-cli v${{ needs.prepare.outputs.cli-version }} patched with discussion-id API (self-hosted)
+            org.opencontainers.image.version=${{ needs.prepare.outputs.tag }}
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          files: artifacts/anytype-cli-*.tar.gz
+          generate_release_notes: false
+          draft: false
+          prerelease: false
+          body: |
+            Patched build of [${{ env.UPSTREAM_CLI_REPO }}@${{ needs.prepare.outputs.cli-version }}](https://github.com/${{ env.UPSTREAM_CLI_REPO }}/releases/tag/${{ needs.prepare.outputs.cli-version }}) with the discussion-id API change ([GeekSquirrel/anytype-heart GO-3132](https://github.com/GeekSquirrel/anytype-heart/tree/GO-3132-expose-discussion-id)).
+
+            - anytype-heart: ${{ needs.prepare.outputs.heart-version }} + `patches/anytype-heart-discussion-id.patch` (patch status: ${{ needs.build.outputs.patch-status }})
+            - Image: `${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.tag }}` (moving tag: `discussion`)
+
+            Once upstream merges GO-3132 and ships a release that includes it, this fork's builds become plain upstream builds; retire the fork setup then.
