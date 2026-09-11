@@ -57,7 +57,7 @@ index 4b37091a0..94a4e1fcc 100644
            $ref: '#/components/schemas/Icon'
          id:
 diff --git a/core/api/model/chat.go b/core/api/model/chat.go
-index 423853c92..8900fd8d5 100644
+index 423853c92..b3045626f 100644
 --- a/core/api/model/chat.go
 +++ b/core/api/model/chat.go
 @@ -14,11 +14,30 @@ type ChatMessage struct {
@@ -133,10 +133,14 @@ index 423853c92..8900fd8d5 100644
  		}
 -		marks = append(marks, tm)
 +		result = append(result, tm)
-+	}
+ 	}
 +	return result
 +}
-+
+ 
+-	return ChatMessageContent{
+-		Text:  content.Text,
+-		Style: textStyleToString(content.Style),
+-		Marks: marks,
 +func chatMessageBlocksFromProto(blocks []*model.ChatMessageMessageBlock) []ChatMessageBlock {
 +	result := make([]ChatMessageBlock, 0, len(blocks))
 +	for _, b := range blocks {
@@ -189,11 +193,7 @@ index 423853c92..8900fd8d5 100644
  	}
 +	return result
 +}
- 
--	return ChatMessageContent{
--		Text:  content.Text,
--		Style: textStyleToString(content.Style),
--		Marks: marks,
++
 +func linkTypeToString(t model.ChatMessageMessageBlockLinkLinkType) string {
 +	switch t {
 +	case model.ChatMessageMessageBlockLink_File:
@@ -202,17 +202,79 @@ index 423853c92..8900fd8d5 100644
 +		return "image"
 +	case model.ChatMessageMessageBlockLink_Bookmark:
 +		return "bookmark"
- 	}
++	}
 +	return "object"
  }
  
  func chatAttachmentsFromProto(attachments []*model.ChatMessageAttachment) []ChatAttachment {
+@@ -200,6 +290,26 @@ func chatReactionsFromProto(reactions *model.ChatMessageReactions) map[string][]
+ 	return result
+ }
+ 
++// withTextBlock mirrors the flat message part into the canonical
++// block-composed representation desktop clients use, so API-originated
++// messages carry blocks like any other message. The flat part is kept for
++// readers of the legacy field.
++func withTextBlock(msg *model.ChatMessage) *model.ChatMessage {
++	if msg == nil || msg.Message == nil || len(msg.Blocks) > 0 {
++		return msg
++	}
++	msg.Blocks = []*model.ChatMessageMessageBlock{{
++		Content: &model.ChatMessageMessageBlockContentOfText{
++			Text: &model.ChatMessageMessageBlockText{
++				Text:  msg.Message.Text,
++				Style: msg.Message.Style,
++				Marks: msg.Message.Marks,
++			},
++		},
++	}}
++	return msg
++}
++
+ func MessageContentToProto(req AddChatMessageRequest) *model.ChatMessage {
+ 	marks := make([]*model.BlockContentTextMark, 0, len(req.Marks))
+ 	for _, m := range req.Marks {
+@@ -218,7 +328,7 @@ func MessageContentToProto(req AddChatMessageRequest) *model.ChatMessage {
+ 		})
+ 	}
+ 
+-	return &model.ChatMessage{
++	return withTextBlock(&model.ChatMessage{
+ 		ReplyToMessageId: req.ReplyToMessageId,
+ 		Message: &model.ChatMessageMessageContent{
+ 			Text:  req.Text,
+@@ -226,7 +336,7 @@ func MessageContentToProto(req AddChatMessageRequest) *model.ChatMessage {
+ 			Marks: marks,
+ 		},
+ 		Attachments: attachments,
+-	}
++	})
+ }
+ 
+ func EditContentToProto(req EditChatMessageRequest) *model.ChatMessage {
+@@ -247,14 +357,14 @@ func EditContentToProto(req EditChatMessageRequest) *model.ChatMessage {
+ 		})
+ 	}
+ 
+-	return &model.ChatMessage{
++	return withTextBlock(&model.ChatMessage{
+ 		Message: &model.ChatMessageMessageContent{
+ 			Text:  req.Text,
+ 			Style: stringToTextStyle(req.Style),
+ 			Marks: marks,
+ 		},
+ 		Attachments: attachments,
+-	}
++	})
+ }
+ 
+ func ChatMessageSearchResultFromProto(r *model.SearchMessageResult) ChatMessageSearchResult {
 diff --git a/core/api/model/chat_test.go b/core/api/model/chat_test.go
 new file mode 100644
-index 000000000..b10403b2b
+index 000000000..682be0548
 --- /dev/null
 +++ b/core/api/model/chat_test.go
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,95 @@
 +package apimodel
 +
 +import (
@@ -220,6 +282,7 @@ index 000000000..b10403b2b
 +
 +	"github.com/anyproto/anytype-heart/pkg/lib/pb/model"
 +	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
 +)
 +
 +func textBlock(text string) *model.ChatMessageMessageBlock {
@@ -287,6 +350,25 @@ index 000000000..b10403b2b
 +	assert.NotNil(t, cm.Blocks)
 +	assert.NotNil(t, cm.Attachments)
 +	assert.NotNil(t, cm.Reactions)
++}
++
++func TestMessageContentToProto_SynthesizesTextBlock(t *testing.T) {
++	msg := MessageContentToProto(AddChatMessageRequest{Text: "from the api"})
++
++	assert.Equal(t, "from the api", msg.Message.Text)
++	require.Len(t, msg.Blocks, 1)
++	tb := msg.Blocks[0].GetText()
++	require.NotNil(t, tb)
++	assert.Equal(t, "from the api", tb.Text)
++}
++
++func TestEditContentToProto_SynthesizesTextBlock(t *testing.T) {
++	msg := EditContentToProto(EditChatMessageRequest{Text: "edited"})
++
++	assert.Equal(t, "edited", msg.Message.Text)
++	require.Len(t, msg.Blocks, 1)
++	require.NotNil(t, msg.Blocks[0].GetText())
++	assert.Equal(t, "edited", msg.Blocks[0].GetText().Text)
 +}
 diff --git a/core/api/model/object.go b/core/api/model/object.go
 index 82a01054d..9a4a64720 100644

@@ -11,7 +11,7 @@ CLI 把 `anytype-heart` 作为 Go 库引入并直接复用其 `core/api` HTTP �
 
 | 文件 | 作用 |
 |---|---|
-| `patches/anytype-heart-discussion-id.patch` | 补丁，基线记录在 `patches/heart-patch-base`（当前 `v0.50.20`）：① GO-3132 discussionId API；② v1 ChatMessage 暴露 blocks（对齐桌面端块结构消息，桌面端发的消息不再读出空文本） |
+| `patches/anytype-heart-discussion-id.patch` | 补丁，基线记录在 `patches/heart-patch-base`（当前 `v0.50.20`）：① GO-3132 discussionId API；② v1 ChatMessage 暴露 blocks（桌面端消息不再读出空文本）；③ v1 写入侧合成 text block（API 发的消息与桌面端同构，`blocks` 成为所有消息的统一读取入口） |
 | `.github/workflows/release-discussion.yml` | 监控上游版本并自动构建发布补丁镜像 |
 | `.github/workflows/release.yml` | 与上游一致，仅禁用 tag 触发（避免与补丁 tag 冲突）并移除 Docker Hub / Slack 步骤（fork 无对应 secrets） |
 
