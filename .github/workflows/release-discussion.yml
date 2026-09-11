@@ -33,7 +33,11 @@ concurrency:
 env:
   UPSTREAM_CLI_REPO: anyproto/anytype-cli
   COMPOSE_REPO: anyproto/any-sync-dockercompose
-  HEART_REPO: GeekSquirrel/anytype-heart
+  # Build against UPSTREAM heart: it always has its own release tags, while a
+  # fork only snapshots tags at fork time. The patch comes from patches/ in
+  # this repo; the fork's heart branch is provenance for humans, not a build
+  # input.
+  HEART_REPO: anyproto/anytype-heart
 
 jobs:
   prepare:
@@ -42,6 +46,7 @@ jobs:
     outputs:
       cli-version: ${{ steps.resolve.outputs.cli_version }}
       heart-version: ${{ steps.resolve.outputs.heart_version }}
+      heart-ref: ${{ steps.resolve.outputs.heart_ref }}
       tag: ${{ steps.resolve.outputs.tag }}
       skip: ${{ steps.resolve.outputs.skip }}
       patch-status: ${{ steps.resolve.outputs.patch_status }}
@@ -109,6 +114,14 @@ jobs:
             exit 1
           fi
 
+          # A pseudo-version (main-branch pin) is not a git ref; extract the
+          # commit SHA from its suffix so the checkout step can use it.
+          HEART_REF="${HEART_VERSION}"
+          if [[ "${HEART_VERSION}" =~ -[0-9]{14}-([0-9a-f]{12})$ ]]; then
+            HEART_REF="${BASH_REMATCH[1]}"
+          fi
+          echo "heart_ref=${HEART_REF}" >> "$GITHUB_OUTPUT"
+
           # Next -discussion.N suffix for this CLI version
           LAST_N="$(git ls-remote --tags origin "refs/tags/${CLI_VERSION}-discussion.*" \
             | sed 's|.*refs/tags/||' | grep -v '\^{}' \
@@ -158,11 +171,11 @@ jobs:
           ref: ${{ needs.prepare.outputs.cli-version }}
           path: cli-src
 
-      - name: Checkout patched anytype-heart
+      - name: Checkout upstream anytype-heart at required version
         uses: actions/checkout@v6
         with:
           repository: ${{ env.HEART_REPO }}
-          ref: ${{ needs.prepare.outputs.heart-version }}
+          ref: ${{ needs.prepare.outputs.heart-ref }}
           path: heart-src
 
       - name: Apply discussion-id patch to anytype-heart
@@ -239,7 +252,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/heart-src:/heart-src" \
             -v "$GO_MOD_CACHE:/go/pkg/mod" \
             -v "$GO_BUILD_CACHE:/root/.cache/go-build" \
-            -e VERSION -e COMMIT -e BUILD_TIME -e GIT_STATE -e MUSL_CC -e TARGET \
+            -e VERSION -e COMMIT -e BUILD_TIME -e GIT_STATE -e MUSL_CC -e TARGET -e GOTOOLCHAIN=auto \
             "golang:${GO_VERSION#go}-alpine" \
             sh -c 'apk add --no-cache gcc musl-dev make curl tar git &&
                    git config --global --add safe.directory /src &&

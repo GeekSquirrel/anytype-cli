@@ -24,8 +24,10 @@ CLI 把 `anytype-heart` 作为 Go 库引入并直接复用其 `core/api` HTTP �
    手动输入 > 官方 [any-sync-dockercompose](https://github.com/anyproto/any-sync-dockercompose)
    `.env.example` 中钉住的具体版本 > **上游 anytype-cli 最新已发布的 release**（`.env` 为 `latest` 时的默认监控源，Releases API 查询，不含 prerelease）。
 2. 若该版本已有 `vX.Y.Z-discussion.N` tag 则跳过（`force=true` 可强制追加新编号）。
-3. 检出上游 CLI tag + 检出本 fork 的 heart 对应版本，应用补丁
-   （已包含于上游则自动跳过补丁；上下文漂移时用 `git apply -3` 兜底；彻底失配则报错等待手动 rebase）。
+3. 从该 CLI 版本的 `go.mod` 解析其依赖的 heart 版本（tag 或伪版本自动转 commit SHA），
+   检出**上游** anytype-heart 对应版本并应用补丁
+   （已包含于上游则自动跳过补丁；上下文漂移时用 `git apply -3` 兜底；补丁失配或编译失败都会
+   硬失败、不发布镜像，等待手动 rebase `patches/` 后重跑）。
 4. `go mod replace` 指向补丁 heart，按上游同款 alpine/musl 流程静态编译 linux amd64 + arm64，
    推送镜像 `ghcr.io/geeksquirrel/anytype-cli:vX.Y.Z-discussion.N` 和移动 tag `discussion`，
    并创建同名 GitHub Release（附 linux 二进制）。
