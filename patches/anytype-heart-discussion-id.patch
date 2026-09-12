@@ -1,5 +1,77 @@
+diff --git a/core/api/core/core.go b/core/api/core/core.go
+index c843c7ac3..bef0d2e7f 100644
+--- a/core/api/core/core.go
++++ b/core/api/core/core.go
+@@ -56,6 +56,7 @@ type ClientCommands interface {
+ 	ObjectShow(context.Context, *pb.RpcObjectShowRequest) *pb.RpcObjectShowResponse
+ 	ObjectCreate(context.Context, *pb.RpcObjectCreateRequest) *pb.RpcObjectCreateResponse
+ 	ObjectCreateBookmark(context.Context, *pb.RpcObjectCreateBookmarkRequest) *pb.RpcObjectCreateBookmarkResponse
++	ObjectAddDiscussion(context.Context, *pb.RpcObjectDiscussionAddRequest) *pb.RpcObjectDiscussionAddResponse
+ 	ObjectSearch(context.Context, *pb.RpcObjectSearchRequest) *pb.RpcObjectSearchResponse
+ 	ObjectSearchSubscribe(context.Context, *pb.RpcObjectSearchSubscribeRequest) *pb.RpcObjectSearchSubscribeResponse
+ 	ObjectSearchUnsubscribe(context.Context, *pb.RpcObjectSearchUnsubscribeRequest) *pb.RpcObjectSearchUnsubscribeResponse
+diff --git a/core/api/core/mock_apicore/mock_ClientCommands.go b/core/api/core/mock_apicore/mock_ClientCommands.go
+index 582afc1cf..3ac6c365d 100644
+--- a/core/api/core/mock_apicore/mock_ClientCommands.go
++++ b/core/api/core/mock_apicore/mock_ClientCommands.go
+@@ -365,6 +365,55 @@ func (_c *MockClientCommands_ChatDeleteMessage_Call) RunAndReturn(run func(conte
+ 	return _c
+ }
+ 
++// ObjectAddDiscussion provides a mock function with given fields: _a0, _a1
++func (_m *MockClientCommands) ObjectAddDiscussion(_a0 context.Context, _a1 *pb.RpcObjectDiscussionAddRequest) *pb.RpcObjectDiscussionAddResponse {
++	ret := _m.Called(_a0, _a1)
++
++	if len(ret) == 0 {
++		panic("no return value specified for ObjectAddDiscussion")
++	}
++
++	var r0 *pb.RpcObjectDiscussionAddResponse
++	if rf, ok := ret.Get(0).(func(context.Context, *pb.RpcObjectDiscussionAddRequest) *pb.RpcObjectDiscussionAddResponse); ok {
++		r0 = rf(_a0, _a1)
++	} else {
++		if ret.Get(0) != nil {
++			r0 = ret.Get(0).(*pb.RpcObjectDiscussionAddResponse)
++		}
++	}
++
++	return r0
++}
++
++// MockClientCommands_ObjectAddDiscussion_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ObjectAddDiscussion'
++type MockClientCommands_ObjectAddDiscussion_Call struct {
++	*mock.Call
++}
++
++// ObjectAddDiscussion is a helper method to define mock.On call
++//   - _a0 context.Context
++//   - _a1 *pb.RpcObjectDiscussionAddRequest
++func (_e *MockClientCommands_Expecter) ObjectAddDiscussion(_a0 interface{}, _a1 interface{}) *MockClientCommands_ObjectAddDiscussion_Call {
++	return &MockClientCommands_ObjectAddDiscussion_Call{Call: _e.mock.On("ObjectAddDiscussion", _a0, _a1)}
++}
++
++func (_c *MockClientCommands_ObjectAddDiscussion_Call) Run(run func(_a0 context.Context, _a1 *pb.RpcObjectDiscussionAddRequest)) *MockClientCommands_ObjectAddDiscussion_Call {
++	_c.Call.Run(func(args mock.Arguments) {
++		run(args[0].(context.Context), args[1].(*pb.RpcObjectDiscussionAddRequest))
++	})
++	return _c
++}
++
++func (_c *MockClientCommands_ObjectAddDiscussion_Call) Return(_a0 *pb.RpcObjectDiscussionAddResponse) *MockClientCommands_ObjectAddDiscussion_Call {
++	_c.Call.Return(_a0)
++	return _c
++}
++
++func (_c *MockClientCommands_ObjectAddDiscussion_Call) RunAndReturn(run func(context.Context, *pb.RpcObjectDiscussionAddRequest) *pb.RpcObjectDiscussionAddResponse) *MockClientCommands_ObjectAddDiscussion_Call {
++	_c.Call.Return(run)
++	return _c
++}
++
+ // ChatEditMessageContent provides a mock function with given fields: _a0, _a1
+ func (_m *MockClientCommands) ChatEditMessageContent(_a0 context.Context, _a1 *pb.RpcChatEditMessageContentRequest) *pb.RpcChatEditMessageContentResponse {
+ 	ret := _m.Called(_a0, _a1)
 diff --git a/core/api/docs/openapi.json b/core/api/docs/openapi.json
-index ba486d042..7b77c919b 100644
+index ba486d042..8d0f2634a 100644
 --- a/core/api/docs/openapi.json
 +++ b/core/api/docs/openapi.json
 @@ -2007,6 +2007,11 @@
@@ -26,8 +98,129 @@ index ba486d042..7b77c919b 100644
            "icon": {
              "$ref": "#/components/schemas/Icon"
            },
+@@ -3488,6 +3498,16 @@
+           }
+         },
+         "type": "object"
++      },
++      "ObjectDiscussionResponse": {
++        "properties": {
++          "discussion_id": {
++            "description": "The chat id of the newly created inline discussion; use it as chat_id with the Chat endpoints",
++            "example": "bafyreictrp3obmnf6dwejy5o4p7bderaaia4bdg2psxbfzf44yya5uutge",
++            "type": "string"
++          }
++        },
++        "type": "object"
+       }
+     },
+     "securitySchemes": {
+@@ -8749,6 +8769,103 @@
+           "Templates"
+         ]
+       }
++    },
++    "/v1/spaces/{space_id}/objects/{object_id}/discussion": {
++      "post": {
++        "description": "Creates an inline discussion for the object identified by the object ID and returns the chat id of the new discussion. Agents can then use this id as chat_id with the Chat endpoints to read and write the discussion's messages. Adding a discussion to an object that already has one fails.",
++        "operationId": "add_object_discussion",
++        "parameters": [
++          {
++            "description": "The version of the API to use",
++            "in": "header",
++            "name": "Anytype-Version",
++            "required": true,
++            "schema": {
++              "default": "2025-11-08",
++              "type": "string"
++            }
++          },
++          {
++            "description": "The ID of the space",
++            "in": "path",
++            "name": "space_id",
++            "required": true,
++            "schema": {
++              "type": "string"
++            }
++          },
++          {
++            "description": "The ID of the object to add the discussion to; must be retrieved from ListObjects, SearchSpace or GlobalSearch endpoints or obtained from response context",
++            "in": "path",
++            "name": "object_id",
++            "required": true,
++            "schema": {
++              "type": "string"
++            }
++          }
++        ],
++        "responses": {
++          "201": {
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ObjectDiscussionResponse"
++                }
++              }
++            },
++            "description": "The chat id of the newly created discussion"
++          },
++          "401": {
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/UnauthorizedError"
++                }
++              }
++            },
++            "description": "Unauthorized"
++          },
++          "404": {
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/NotFoundError"
++                }
++              }
++            },
++            "description": "Resource not found"
++          },
++          "429": {
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/RateLimitError"
++                }
++              }
++            },
++            "description": "Rate limit exceeded"
++          },
++          "500": {
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/ServerError"
++                }
++              }
++            },
++            "description": "Internal server error"
++          }
++        },
++        "security": [
++          {
++            "bearerauth": []
++          }
++        ],
++        "summary": "Add a discussion to an object",
++        "tags": [
++          "Object"
++        ]
++      }
+     }
+   },
+   "openapi": "3.1.0",
 diff --git a/core/api/docs/openapi.yaml b/core/api/docs/openapi.yaml
-index 4b37091a0..94a4e1fcc 100644
+index 4b37091a0..af4e682fe 100644
 --- a/core/api/docs/openapi.yaml
 +++ b/core/api/docs/openapi.yaml
 @@ -1684,6 +1684,12 @@ components:
@@ -43,7 +236,21 @@ index 4b37091a0..94a4e1fcc 100644
          icon:
            $ref: '#/components/schemas/Icon'
          id:
-@@ -1744,6 +1750,12 @@ components:
+@@ -1732,6 +1738,13 @@ components:
+       - ObjectLayoutCollection
+       - ObjectLayoutParticipant
+       - ObjectLayoutChat
++    ObjectDiscussionResponse:
++      properties:
++        discussion_id:
++          description: The chat id of the newly created inline discussion; use it as chat_id with the Chat endpoints
++          example: bafyreictrp3obmnf6dwejy5o4p7bderaaia4bdg2psxbfzf44yya5uutge
++          type: string
++      type: object
+     ObjectResponse:
+       properties:
+         object:
+@@ -1744,6 +1757,12 @@ components:
            description: Whether the object is archived
            example: false
            type: boolean
@@ -56,6 +263,117 @@ index 4b37091a0..94a4e1fcc 100644
          icon:
            $ref: '#/components/schemas/Icon'
          id:
+@@ -3189,6 +3208,66 @@ paths:
+       summary: Update space
+       tags:
+       - Spaces
++  /v1/spaces/{space_id}/objects/{object_id}/discussion:
++    post:
++      description: Creates an inline discussion for the object identified by the object ID and returns the chat id of the new discussion. Agents can then use this id as chat_id with the Chat endpoints to read and write the discussion's messages. Adding a discussion to an object that already has one fails.
++      operationId: add_object_discussion
++      parameters:
++      - description: The version of the API to use
++        in: header
++        name: Anytype-Version
++        required: true
++        schema:
++          default: "2025-11-08"
++          type: string
++      - description: The ID of the space
++        in: path
++        name: space_id
++        required: true
++        schema:
++          type: string
++      - description: The ID of the object to add the discussion to; must be retrieved from ListObjects, SearchSpace or GlobalSearch endpoints or obtained from response context
++        in: path
++        name: object_id
++        required: true
++        schema:
++          type: string
++      responses:
++        "201":
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/ObjectDiscussionResponse'
++          description: The chat id of the newly created discussion
++        "401":
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/UnauthorizedError'
++          description: Unauthorized
++        "404":
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/NotFoundError'
++          description: Resource not found
++        "429":
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/RateLimitError'
++          description: Rate limit exceeded
++        "500":
++          content:
++            application/json:
++              schema:
++                $ref: '#/components/schemas/ServerError'
++          description: Internal server error
++      security:
++      - bearerauth: []
++      summary: Add a discussion to an object
++      tags:
++      - Object
+   /v1/spaces/{space_id}/chats:
+     get:
+       description: |-
+diff --git a/core/api/handler/object.go b/core/api/handler/object.go
+index 3b8f3596a..756f731d8 100644
+--- a/core/api/handler/object.go
++++ b/core/api/handler/object.go
+@@ -242,3 +242,39 @@ func DeleteObjectHandler(s *service.Service) gin.HandlerFunc {
+ 		c.JSON(http.StatusOK, apimodel.ObjectResponse{Object: *object})
+ 	}
+ }
++
++// AddDiscussionHandler adds an inline discussion to an object
++//
++//	@Summary		Add a discussion to an object
++//	@Description	Creates an inline discussion for the object identified by the object ID and returns the chat id of the new discussion. Agents can then use this id as chat_id with the Chat endpoints to read and write the discussion's messages. Adding a discussion to an object that already has one fails.
++//	@Id				add_object_discussion
++//	@Tags			Objects
++//	@Produce		json
++//	@Param			Anytype-Version	header		string								true	"The version of the API to use"	default(2025-11-08)
++//	@Param			space_id		path		string								true	"The ID of the space in which the object exists; must be retrieved from ListSpaces endpoint"
++//	@Param			object_id		path		string								true	"The ID of the object to add the discussion to; must be retrieved from ListObjects, SearchSpace or GlobalSearch endpoints or obtained from response context"
++//	@Success		201				{object}	apimodel.ObjectDiscussionResponse	"The chat id of the newly created discussion"
++//	@Failure		401				{object}	util.UnauthorizedError				"Unauthorized"
++//	@Failure		404				{object}	util.NotFoundError					"Resource not found"
++//	@Failure		429				{object}	util.RateLimitError					"Rate limit exceeded"
++//	@Failure		500				{object}	util.ServerError					"Internal server error"
++//	@Security		bearerauth
++//	@Router			/v1/spaces/{space_id}/objects/{object_id}/discussion [post]
++func AddDiscussionHandler(s *service.Service) gin.HandlerFunc {
++	return func(c *gin.Context) {
++		objectId := c.Param("object_id")
++
++		discussionId, err := s.AddDiscussion(c.Request.Context(), objectId)
++		code := util.MapErrorCode(err,
++			util.ErrToCode(service.ErrFailedAddDiscussion, http.StatusInternalServerError),
++		)
++
++		if code != http.StatusOK {
++			apiErr := util.CodeToApiError(code, err.Error())
++			c.JSON(code, apiErr)
++			return
++		}
++
++		c.JSON(http.StatusCreated, apimodel.ObjectDiscussionResponse{DiscussionId: discussionId})
++	}
++}
 diff --git a/core/api/model/chat.go b/core/api/model/chat.go
 index 423853c92..b3045626f 100644
 --- a/core/api/model/chat.go
@@ -371,12 +689,17 @@ index 000000000..682be0548
 +	assert.Equal(t, "edited", msg.Blocks[0].GetText().Text)
 +}
 diff --git a/core/api/model/object.go b/core/api/model/object.go
-index 82a01054d..9a4a64720 100644
+index 82a01054d..b8dccf8a7 100644
 --- a/core/api/model/object.go
 +++ b/core/api/model/object.go
-@@ -65,30 +65,32 @@ type ObjectResponse struct {
+@@ -64,31 +64,37 @@ type ObjectResponse struct {
+ 	Object ObjectWithBody `json:"object"` // The object
  }
  
++type ObjectDiscussionResponse struct {
++	DiscussionId string `json:"discussion_id" example:"bafyreictrp3obmnf6dwejy5o4p7bderaaia4bdg2psxbfzf44yya5uutge"` // The chat id of the newly created inline discussion; use it as chat_id with the Chat endpoints
++}
++
  type Object struct {
 -	Object     string              `json:"object" example:"object"`                                                                                                                                                                                                                      // The data model of the object
 -	Id         string              `json:"id" example:"bafyreie6n5l5nkbjal37su54cha4coy7qzuhrnajluzv5qd5jvtsrxkequ"`                                                                                                                                                                     // The id of the object
@@ -428,11 +751,81 @@ index 82a01054d..9a4a64720 100644
  }
  
  // ! Deprecated schemas, until json blocks properly implemented
+diff --git a/core/api/server/router.go b/core/api/server/router.go
+index 8d9b963c4..010d26151 100644
+--- a/core/api/server/router.go
++++ b/core/api/server/router.go
+@@ -281,6 +281,11 @@ func (srv *Server) registerObjectRoutes(v1 *gin.RouterGroup, eventService apicor
+ 		ensureAnalyticsEvent("DeleteObject", eventService),
+ 		handler.DeleteObjectHandler(srv.service),
+ 	)
++	v1.POST("/spaces/:space_id/objects/:object_id/discussion",
++		writeRateLimitMW,
++		ensureAnalyticsEvent("AddObjectDiscussion", eventService),
++		handler.AddDiscussionHandler(srv.service),
++	)
+ }
+ 
+ // registerPropertyRoutes registers property-related routes
+diff --git a/core/api/service/discussion_test.go b/core/api/service/discussion_test.go
+new file mode 100644
+index 000000000..8ee131688
+--- /dev/null
++++ b/core/api/service/discussion_test.go
+@@ -0,0 +1,40 @@
++package service
++
++import (
++	"context"
++	"testing"
++
++	"github.com/anyproto/anytype-heart/pb"
++	"github.com/stretchr/testify/assert"
++)
++
++func TestObjectService_AddDiscussion(t *testing.T) {
++	t.Run("returns the new discussion id", func(t *testing.T) {
++		fx := newFixture(t)
++		ctx := context.Background()
++		fx.mwMock.EXPECT().ObjectAddDiscussion(ctx, &pb.RpcObjectDiscussionAddRequest{ObjectId: "obj1"}).Return(&pb.RpcObjectDiscussionAddResponse{
++			DiscussionId: "discussion1",
++			Error:        &pb.RpcObjectDiscussionAddResponseError{Code: pb.RpcObjectDiscussionAddResponseError_NULL},
++		})
++
++		discussionId, err := fx.service.AddDiscussion(ctx, "obj1")
++
++		assert.NoError(t, err)
++		assert.Equal(t, "discussion1", discussionId)
++	})
++
++	t.Run("middleware failure maps to error", func(t *testing.T) {
++		fx := newFixture(t)
++		ctx := context.Background()
++		fx.mwMock.EXPECT().ObjectAddDiscussion(ctx, &pb.RpcObjectDiscussionAddRequest{ObjectId: "obj1"}).Return(&pb.RpcObjectDiscussionAddResponse{
++			Error: &pb.RpcObjectDiscussionAddResponseError{
++				Code:        pb.RpcObjectDiscussionAddResponseError_UNKNOWN_ERROR,
++				Description: "boom",
++			},
++		})
++
++		_, err := fx.service.AddDiscussion(ctx, "obj1")
++
++		assert.ErrorIs(t, err, ErrFailedAddDiscussion)
++	})
++}
 diff --git a/core/api/service/object.go b/core/api/service/object.go
-index 50ef51906..eb2e2c912 100644
+index 50ef51906..33eae2501 100644
 --- a/core/api/service/object.go
 +++ b/core/api/service/object.go
-@@ -417,16 +417,17 @@ func (s *Service) getObjectFromStruct(details *types.Struct) apimodel.Object {
+@@ -30,6 +30,7 @@ var (
+ 	ErrFailedUpdateObject        = errors.New("failed to update object")
+ 	ErrFailedReplaceBlocks       = errors.New("failed to replace blocks")
+ 	ErrFailedDeleteObject        = errors.New("failed to delete object")
++	ErrFailedAddDiscussion       = errors.New("failed to add discussion")
+ )
+ 
+ // ListObjects retrieves a paginated list of objects in a specific space.
+@@ -417,16 +418,17 @@ func (s *Service) getObjectFromStruct(details *types.Struct) apimodel.Object {
  	typeMap := s.cache.getTypes(spaceId)
  
  	return apimodel.Object{
@@ -460,7 +853,7 @@ index 50ef51906..eb2e2c912 100644
  	}
  }
  
-@@ -436,17 +437,18 @@ func (s *Service) getObjectWithBlocksFromStruct(details *types.Struct, markdown
+@@ -436,17 +438,18 @@ func (s *Service) getObjectWithBlocksFromStruct(details *types.Struct, markdown
  	typeMap := s.cache.getTypes(spaceId)
  
  	return &apimodel.ObjectWithBody{
@@ -490,6 +883,20 @@ index 50ef51906..eb2e2c912 100644
  	}
  }
  
+@@ -525,3 +528,13 @@ func (s *Service) createAndPasteBody(ctx context.Context, spaceId string, object
+ 
+ 	return nil
+ }
++
++// AddDiscussion creates an inline discussion for the object and returns the
++// chat id of the new discussion.
++func (s *Service) AddDiscussion(ctx context.Context, objectId string) (string, error) {
++	resp := s.mw.ObjectAddDiscussion(ctx, &pb.RpcObjectDiscussionAddRequest{ObjectId: objectId})
++	if resp.Error != nil && resp.Error.Code != pb.RpcObjectDiscussionAddResponseError_NULL {
++		return "", ErrFailedAddDiscussion
++	}
++	return resp.DiscussionId, nil
++}
 diff --git a/core/api/service/object_test.go b/core/api/service/object_test.go
 index b5b5df2a1..3ed83ccdb 100644
 --- a/core/api/service/object_test.go
