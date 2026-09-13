@@ -2,7 +2,7 @@ name: Build & Release
 
 on:
   # Fork note (GeekSquirrel): the v*.*.* tag trigger is disabled so our
-  # patched-release tags (vX.Y.Z-discussion.N, built by release-discussion.yml)
+  # patched-release tags (vX.Y.Z-mcp-enhance.N, built by release-mcp-enhance.yml)
   # do not run this upstream workflow. repository_dispatch from heart is
   # replaced by a manual workflow_dispatch.
   workflow_dispatch:

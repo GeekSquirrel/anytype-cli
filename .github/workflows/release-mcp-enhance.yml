@@ -1,10 +1,11 @@
-name: Patched release (discussion-id)
+name: Patched release (mcp-enhance)
 
-# Builds a patched anytype-cli image for self-hosted use before the
-# discussion-id API change is merged upstream. Monitoring source: new
-# releases of upstream anytype-cli (the compose repo's ANYTYPE_CLI_VERSION
-# is followed only if it ever pins a concrete version instead of "latest").
-# Publishes vX.Y.Z-discussion.N images to ghcr.io.
+# Builds a patched anytype-cli image for self-hosted use with the
+# mcp-enhance patch set (see README-MCP-ENHANCED.md) until its changes
+# are merged upstream. Monitoring source: new releases of upstream
+# anytype-cli (the compose repo's ANYTYPE_CLI_VERSION is followed only
+# if it ever pins a concrete version instead of "latest").
+# Publishes vX.Y.Z-mcp-enhance.N images to ghcr.io.
 
 on:
   schedule:
@@ -18,7 +19,7 @@ on:
         required: false
         default: ""
       force:
-        description: "Build a new -discussion.N even if one already exists for this version"
+        description: "Build a new -mcp-enhance.N even if one already exists for this version"
         type: boolean
         default: false
 
@@ -27,7 +28,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: discussion-release
+  group: mcp-enhance-release
   cancel-in-progress: false
 
 env:
@@ -74,7 +75,7 @@ jobs:
           #   that version).
           # - "latest" (or unset) means follow upstream releases: the newest
           #   published release of anyproto/anytype-cli is the trigger; each
-          #   new release gets its own -discussion.N build.
+          #   new release gets its own -mcp-enhance.N build.
           if [ -z "${CLI_VERSION}" ]; then
             PINNED="$(curl -fsSL "https://raw.githubusercontent.com/${COMPOSE_REPO}/main/.env.example" \
               | grep -E '^ANYTYPE_CLI_VERSION=' | head -n1 | cut -d= -f2 | tr -d '[:space:]' || true)"
@@ -122,17 +123,17 @@ jobs:
           fi
           echo "heart_ref=${HEART_REF}" >> "$GITHUB_OUTPUT"
 
-          # Next -discussion.N suffix for this CLI version
-          LAST_N="$(git ls-remote --tags origin "refs/tags/${CLI_VERSION}-discussion.*" \
+          # Next -mcp-enhance.N suffix for this CLI version
+          LAST_N="$(git ls-remote --tags origin "refs/tags/${CLI_VERSION}-mcp-enhance.*" \
             | sed 's|.*refs/tags/||' | grep -v '\^{}' \
-            | grep -oE 'discussion\.[0-9]+$' | grep -oE '[0-9]+$' | sort -n | tail -n1 || true)"
+            | grep -oE 'mcp-enhance\.[0-9]+$' | grep -oE '[0-9]+$' | sort -n | tail -n1 || true)"
           if [ -n "${LAST_N}" ] && [ "${FORCE}" != "true" ]; then
-            echo "${CLI_VERSION} already patched as ${CLI_VERSION}-discussion.${LAST_N}; nothing to do"
+            echo "${CLI_VERSION} already patched as ${CLI_VERSION}-mcp-enhance.${LAST_N}; nothing to do"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             NEXT_N=$(( ${LAST_N:-0} + 1 ))
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "tag=${CLI_VERSION}-discussion.${NEXT_N}" >> "$GITHUB_OUTPUT"
+            echo "tag=${CLI_VERSION}-mcp-enhance.${NEXT_N}" >> "$GITHUB_OUTPUT"
           fi
 
           echo "cli_version=${CLI_VERSION}" >> "$GITHUB_OUTPUT"
@@ -178,20 +179,20 @@ jobs:
           ref: ${{ needs.prepare.outputs.heart-ref }}
           path: heart-src
 
-      - name: Apply discussion-id patch to anytype-heart
+      - name: Apply mcp-enhance patch to anytype-heart
         id: patch
         working-directory: heart-src
         shell: bash
         run: |
           set -euo pipefail
-          PATCH="../patches/anytype-heart-discussion-id.patch"
+          PATCH="../patches/anytype-heart-mcp-enhance.patch"
           BASE="$(cat ../patches/heart-patch-base 2>/dev/null || true)"
 
           if git apply --check "${PATCH}" 2>/dev/null; then
             git apply "${PATCH}"
             echo "status=applied" >> "$GITHUB_OUTPUT"
           elif git apply --check --reverse "${PATCH}" 2>/dev/null; then
-            echo "::notice::discussion-id change is already present in anytype-heart ${HEART_VERSION}; building unpatched"
+            echo "::notice::mcp-enhance patch set is already present in anytype-heart ${HEART_VERSION}; building unpatched"
             echo "status=already-in-upstream" >> "$GITHUB_OUTPUT"
           else
             # Context drifted (heart moved on). Pull the patch's base blobs so
@@ -202,7 +203,7 @@ jobs:
             if git apply -3 "${PATCH}"; then
               echo "status=applied-3way" >> "$GITHUB_OUTPUT"
             else
-              echo "::error::Patch does not apply to anytype-heart ${HEART_VERSION}. Rebase patches/anytype-heart-discussion-id.patch (base: ${BASE:-see patches dir})."
+              echo "::error::Patch does not apply to anytype-heart ${HEART_VERSION}. Rebase patches/anytype-heart-mcp-enhance.patch (base: ${BASE:-see patches dir})."
               exit 1
             fi
           fi
@@ -340,10 +341,10 @@ jobs:
           cache-to: type=gha,mode=max
           tags: |
             ${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.tag }}
-            ${{ steps.image.outputs.name }}:discussion
+            ${{ steps.image.outputs.name }}:mcp-enhance
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.description=anytype-cli v${{ needs.prepare.outputs.cli-version }} patched with discussion-id API (self-hosted)
+            org.opencontainers.image.description=anytype-cli v${{ needs.prepare.outputs.cli-version }} patched with the mcp-enhance patch set (self-hosted)
             org.opencontainers.image.version=${{ needs.prepare.outputs.tag }}
 
       - name: Create release
@@ -357,9 +358,12 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            Patched build of [${{ env.UPSTREAM_CLI_REPO }}@${{ needs.prepare.outputs.cli-version }}](https://github.com/${{ env.UPSTREAM_CLI_REPO }}/releases/tag/${{ needs.prepare.outputs.cli-version }}) with the discussion-id API change ([GeekSquirrel/anytype-heart GO-3132](https://github.com/GeekSquirrel/anytype-heart/tree/GO-3132-expose-discussion-id)).
+            Patched build of [${{ env.UPSTREAM_CLI_REPO }}@${{ needs.prepare.outputs.cli-version }}](https://github.com/${{ env.UPSTREAM_CLI_REPO }}/releases/tag/${{ needs.prepare.outputs.cli-version }}) with the mcp-enhance patch set (`patches/anytype-heart-mcp-enhance.patch`, see [README-MCP-ENHANCED.md](https://github.com/${{ github.repository }}/blob/main/README-MCP-ENHANCED.md)):
 
-            - anytype-heart: ${{ needs.prepare.outputs.heart-version }} + `patches/anytype-heart-discussion-id.patch` (patch status: ${{ needs.build.outputs.patch-status }})
-            - Image: `${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.tag }}` (moving tag: `discussion`)
+            - GO-3132 discussion-id API (inline discussions + chat message blocks + discussion cold-start endpoint)
+            - Rich-markdown round-trip: `anytype://` object links parse back into Mention marks; ```mermaid fences parse back into Latex blocks
 
-            Once upstream merges GO-3132 and ships a release that includes it, this fork's builds become plain upstream builds; retire the fork setup then.
+            - anytype-heart: ${{ needs.prepare.outputs.heart-version }} + `patches/anytype-heart-mcp-enhance.patch` (patch status: ${{ needs.build.outputs.patch-status }})
+            - Image: `${{ steps.image.outputs.name }}:${{ needs.prepare.outputs.tag }}` (moving tag: `mcp-enhance`)
+
+            Once upstream merges these changes and ships a release that includes them, this fork's builds become plain upstream builds; retire the fork setup then.
