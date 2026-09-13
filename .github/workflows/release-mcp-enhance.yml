@@ -1,7 +1,7 @@
 name: Patched release (mcp-enhance)
 
 # Builds a patched anytype-cli image for self-hosted use with the
-# mcp-enhance patch set (see README-MCP-ENHANCED.md) until its changes
+# mcp-enhance patch set (see README.md) until its changes
 # are merged upstream. Monitoring source: new releases of upstream
 # anytype-cli (the compose repo's ANYTYPE_CLI_VERSION is followed only
 # if it ever pins a concrete version instead of "latest").
@@ -358,7 +358,7 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            Patched build of [${{ env.UPSTREAM_CLI_REPO }}@${{ needs.prepare.outputs.cli-version }}](https://github.com/${{ env.UPSTREAM_CLI_REPO }}/releases/tag/${{ needs.prepare.outputs.cli-version }}) with the mcp-enhance patch set (`patches/anytype-heart-mcp-enhance.patch`, see [README-MCP-ENHANCED.md](https://github.com/${{ github.repository }}/blob/main/README-MCP-ENHANCED.md)):
+            Patched build of [${{ env.UPSTREAM_CLI_REPO }}@${{ needs.prepare.outputs.cli-version }}](https://github.com/${{ env.UPSTREAM_CLI_REPO }}/releases/tag/${{ needs.prepare.outputs.cli-version }}) with the mcp-enhance patch set (`patches/anytype-heart-mcp-enhance.patch`, see [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)):
 
             - GO-3132 discussion-id API (inline discussions + chat message blocks + discussion cold-start endpoint)
             - Rich-markdown round-trip: `anytype://` object links parse back into Mention marks; ```mermaid fences parse back into Latex blocks

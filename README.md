@@ -1,257 +1,131 @@
-# Anytype CLI
+[English](README.md) | [简体中文](README.zh.md)
 
-A command-line interface for interacting with [Anytype](https://github.com/anyproto/anytype-ts). This CLI embeds [anytype-heart](https://github.com/anyproto/anytype-heart) as the server, making it a complete, self-contained solution for developers to work with a headless Anytype instance.
+> Both language versions must be kept in sync: when updating either one, update the other.
 
-## Contents
+# Self-hosted patched build (mcp-enhance)
 
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-  - [Running the Server](#running-the-server)
-  - [Network Configuration](#network-configuration)
-  - [Authentication](#authentication)
-  - [API Keys](#api-keys)
-  - [Space Management](#space-management)
-- [Development](#development)
-  - [Project Structure](#project-structure)
-  - [Building from Source](#building-from-source)
-- [Contribution](#contribution)
+This fork maintains a patch set on top of the official anytype-cli so that
+self-hosted (any-sync-dockercompose) deployments get several agent/API-facing
+capability enhancements ahead of upstream. The patch set is named
+**mcp-enhance**: capabilities added for the MCP / agent tool surface.
 
-## Installation
+## What it changes
 
-Install the latest release with a single command:
+The CLI embeds `anytype-heart` as a Go library and reuses its `core/api` HTTP
+service (container port 31012), so all patches live on the heart side; this
+repo only carries the mechanism that makes the build use the patched heart:
 
-```bash
-/usr/bin/env bash -c "$(curl -fsSL https://raw.githubusercontent.com/anyproto/anytype-cli/HEAD/install.sh)"
+| File | Purpose |
+|---|---|
+| `patches/anytype-heart-mcp-enhance.patch` | The patch set; its base is recorded in `patches/heart-patch-base` (currently `v0.50.20`). See details below |
+| `.github/workflows/release-mcp-enhance.yml` | Watches upstream versions and builds/publishes the patched image automatically |
+| `.github/workflows/release.yml` | Same as upstream, except the tag trigger is disabled (avoids clashing with patch tags) and Docker Hub / Slack steps are removed (the fork lacks those secrets) |
+
+## Patch set features in detail
+
+### 1. GO-3132: discussionId API (programmable discussions)
+
+Lets agents read and write object inline discussions (comments) like humans do:
+
+- **v1 Object models expose `discussion_id`**: reading an object returns the id
+  of its inline discussion (`discussion_id` is not part of the upstream OpenAPI
+  spec — it is an extension field added by this patch);
+- **v1 ChatMessage exposes `blocks`**: chat messages return their full block
+  structure, so desktop-originated messages no longer read back as empty text;
+- **API messages get synthesized text blocks**: messages created through the
+  API get a server-side synthesized text block, making them structurally
+  identical to desktop-originated ones — `blocks` becomes the single uniform
+  read path for all messages;
+- **Discussion cold-start endpoint**: new endpoint
+  `POST /v1/spaces/{space_id}/objects/{object_id}/discussion`, so agents can
+  create a discussion for objects that don't have one yet (upstream only
+  creates discussions lazily from the UI).
+
+### 2. Rich-markdown round-trip (anymark parsing fix)
+
+Fixes the read/write asymmetry of "exported formats that cannot be parsed
+back": the exporters serialize Mention marks as `anytype://` links and Mermaid
+diagrams as ` ```mermaid ` fences, but the write-side parser (anymark) did not
+understand either form — so **rich content written by agents through the API
+could never become real mentions or real diagrams** (humans are unaffected
+because the editor talks RPC directly):
+
+- **`anytype://object?objectId=…` links → Mention marks**: parsed back into
+  `BlockContentTextMark_Mention` (Param = objectId) on write. Effect: the
+  object link graph registers correctly (links / backlinks both visible —
+  the collector `FillSmartIds` only counts Mention/Object marks) and the UI
+  renders an object mention card; plain https links and non-object
+  anytype:// links behave exactly as before;
+- **` ```mermaid ` fences → Latex blocks**: parsed into `BlockContentLatex`
+  (Processor=Mermaid), matching the upstream Notion importer's
+  `handleMermaidBlock` construction exactly, so clients render diagrams;
+  code fences in all other languages are unchanged (still Code text blocks
+  with a `lang` field);
+- **Round-trip test guardrails**: new `richmd_test.go` (mention with/without
+  spaceId, mermaid, plain links, plain code fences as regression cases). Any
+  future "exportable but not parseable" block type should get a test case
+  first, then a fix.
+
+Traceable source branch for the patches:
+[GeekSquirrel/anytype-heart `GO-3132-v0.50.20-discussion-id`](https://github.com/GeekSquirrel/anytype-heart/tree/GO-3132-v0.50.20-discussion-id)
+(GO-3132 commits + blocks exposure + the anymark round-trip fix, based on
+heart v0.50.20 which is what the CLI depends on). The newer branch
+`GO-3132-expose-discussion-id` (based on a newer upstream tree) carries the
+same changes and serves as a reference for future rebases.
+
+## How release-mcp-enhance.yml works
+
+1. Every 30 minutes (cron) or on manual dispatch (workflow_dispatch), resolve
+   the CLI version to build: manual input > a concrete version pinned in the
+   official [any-sync-dockercompose](https://github.com/anyproto/any-sync-dockercompose)
+   `.env.example` > **the latest published release of upstream anytype-cli**
+   (the default watch source when `.env` says `latest`; via the Releases API,
+   prereleases excluded).
+2. If a `vX.Y.Z-mcp-enhance.N` tag already exists for that version, skip
+   (`force=true` forces a new number). Note: the naming was migrated from
+   `vX.Y.Z-discussion.N`; old tags are not counted and numbering restarts at .1.
+3. Read the heart version required by that CLI release from its `go.mod`
+   (tags and pseudo-versions are auto-converted to commit SHAs), check out
+   **upstream** anytype-heart at that version and apply the patch set
+   (auto-skipped if already contained upstream; `git apply -3` as a fallback
+   on context drift; patch mismatch or build failure hard-fails without
+   publishing an image, waiting for a manual rebase of `patches/`).
+4. `go mod replace` points at the patched heart, then a static linux amd64 +
+   arm64 musl build follows the upstream alpine flow; pushes
+   `ghcr.io/geeksquirrel/anytype-cli:vX.Y.Z-mcp-enhance.N` plus the moving tag
+   `mcp-enhance`, and creates a GitHub Release of the same name (with linux
+   binaries attached).
+
+## Using it in any-sync-dockercompose
+
+Create a `docker-compose.override.yml` in the deployment directory:
+
+```yaml
+services:
+  anytype-cli:
+    image: ghcr.io/geeksquirrel/anytype-cli:mcp-enhance
+  anytype-cli_bootstrap:
+    image: ghcr.io/geeksquirrel/anytype-cli:mcp-enhance
 ```
 
-## Quick Start
+Then `docker compose pull anytype-cli anytype-cli_bootstrap && docker compose up -d anytype-cli`.
 
-> [!IMPORTANT]
-> The headless middleware requires a dedicated bot account, which you create using `anytype auth create`. This process generates an account key for authentication - mnemonic-based login is not supported. The bot account only has access to spaces it explicitly joins, keeping your data isolated and allowing you to easily revoke its access at any time from the desktop app.
+The moving tag `mcp-enhance` always points at the newest patched build; pin a concrete `vX.Y.Z-mcp-enhance.N` instead if you want to freeze a version.
 
-Get up and running in just a few commands:
+> Note: the first ghcr package pushed with GITHUB_TOKEN is **private** by
+> default. Go to GitHub → Packages → anytype-cli → Package settings and switch
+> it to Public, or pulling from the deployment host requires `docker login ghcr.io` first.
 
-```bash
-# Run the Anytype server
-anytype serve
+> Migrating from the old `discussion` image tag: the moving tag is now
+> `mcp-enhance`; update the image references in your compose.override accordingly.
 
-# Or install as a user service
-anytype service install
-anytype service start
+## Retiring once upstream merges
 
-# Create a new bot account
-anytype auth create <name>
+Once the patched changes are merged and released upstream:
 
-# Join a space via invite link
-anytype space join <invite-link>
-
-# Verify the space was joined
-anytype space list
-
-# Create an API key for programmatic access
-anytype auth apikey create "my-bot-api-key"
-```
-
-Once running, the API is available at `http://127.0.0.1:31012`. Use your API key to authenticate requests to the endpoints described on the [Developer Portal](https://developers.anytype.io). See [Network Configuration](#network-configuration) for remote access options.
-
-## Usage
-
-```
-anytype <command> <subcommand> [flags]
-
-Commands:
-  auth        Manage authentication and accounts
-  serve       Run anytype in foreground
-  service     Manage anytype as a user service
-  shell       Start interactive shell mode
-  space       Manage spaces
-  update      Update to the latest version
-  version     Show version information
-
-Examples:
-  anytype serve                     # Run in foreground
-  anytype service install           # Install as user service
-  anytype service start             # Start the service
-  anytype auth login                # Log in to your account
-  anytype auth create <name>        # Create a new account
-  anytype space list                # List all available spaces
-
-Use "anytype <command> --help" for more information about a command.
-```
-
-### Running the Server
-
-The CLI embeds anytype-heart as the server that can be run in two ways:
-
-#### 1. Interactive Mode (for development)
-
-```bash
-anytype serve
-```
-
-This runs the server in the foreground with logs output to stdout, similar to `ollama serve`.
-
-#### 2. User Service (for production)
-
-```bash
-# Install as user service
-anytype service install
-
-# Start the service
-anytype service start
-
-# Check service status
-anytype service status
-
-# Stop the service
-anytype service stop
-
-# Uninstall the service
-anytype service uninstall
-```
-
-The service management works across platforms:
-
-- **macOS**: Uses User Agent (launchd)
-- **Linux**: Uses systemd user service
-- **Windows**: Uses Windows User Service
-
-### Network Configuration
-
-By default, the server binds to `127.0.0.1` (localhost only) on ports 31010-31012 and is not accessible from other machines. These ports are intentionally different from the Anytype desktop app (which uses 31007-31009), allowing both to run simultaneously on the same machine. Port 31012 is the main API endpoint used for HTTP requests.
-
-| Port  | Service  | Description                 |
-| ----- | -------- | --------------------------- |
-| 31010 | gRPC     | gRPC server endpoint        |
-| 31011 | gRPC-Web | gRPC-Web server endpoint    |
-| 31012 | API      | HTTP API server endpoint ⭐ |
-
-
-You can change the API listen address using `--listen-address` (e.g., `--listen-address 0.0.0.0:31012`). For remote access, you can also use a reverse proxy, SSH tunnel, or Docker port mapping to expose the local ports.
-
-**Security note**: Always keep your API keys safe. If ports are exposed externally, third parties with your API key could gain unauthorized access to the spaces your headless instance has access to.
-
-### Authentication
-
-Manage your Anytype account and authentication:
-
-```bash
-# Create a new account
-anytype auth create <name>
-
-# Log in to your account
-anytype auth login
-
-# Check authentication status
-anytype auth status
-
-# Log out and clear stored credentials
-anytype auth logout
-```
-
-### API Keys
-
-Manage API keys for programmatic access:
-
-```bash
-# Create a new API key
-anytype auth apikey create <name>
-
-# List all API keys
-anytype auth apikey list
-
-# Revoke an API key
-anytype auth apikey revoke <key-id>
-```
-
-### Space Management
-
-Work with Anytype spaces:
-
-```bash
-# List all available spaces
-anytype space list
-
-# Join a space
-anytype space join <invite-link>
-
-# Leave a space
-anytype space leave <space-id>
-```
-
-## Development
-
-### Project Structure
-
-```
-anytype-cli/
-├── cmd/              # CLI commands
-│   ├── auth/         # Authentication commands
-│   ├── serve/        # Server command
-│   ├── service/      # Service management
-│   ├── space/        # Space management
-│   └── ...
-├── core/             # Core business logic
-│   ├── grpcserver/   # Embedded gRPC server (anytype-heart)
-│   ├── serviceprogram/ # Service implementation
-│   └── ...
-└── dist/             # Build output
-```
-
-### Building from Source
-
-#### Prerequisites
-
-- Go 1.26.5 or later
-- Git
-- Make
-- C compiler (gcc or clang, for CGO)
-
-#### Build Commands
-
-```bash
-# Clone the repository
-git clone https://github.com/anyproto/anytype-cli.git
-cd anytype-cli
-
-# Build the CLI (automatically downloads tantivy library)
-make build
-
-# Install to ~/.local/bin
-make install
-
-# Run tests
-go test ./...
-
-# Run linting
-make lint
-
-# Cross-compile for all platforms
-make cross-compile
-```
-
-#### Uninstall
-
-```bash
-# Remove installation from ~/.local/bin
-make uninstall
-```
-
-## Contribution
-
-Thank you for your desire to develop Anytype together!
-
-❤️ This project and everyone involved in it is governed by the [Code of Conduct](https://github.com/anyproto/.github/blob/main/docs/CODE_OF_CONDUCT.md).
-
-🧑‍💻 Check out our [contributing guide](https://github.com/anyproto/.github/blob/main/docs/CONTRIBUTING.md) to learn about asking questions, creating issues, or submitting pull requests.
-
-🫢 For security findings, please email [security@anytype.io](mailto:security@anytype.io) and refer to our [security guide](https://github.com/anyproto/.github/blob/main/docs/SECURITY.md) for more information.
-
-🤝 Follow us on [Github](https://github.com/anyproto) and join the [Contributors Community](https://github.com/orgs/anyproto/discussions).
-
----
-
-Made by Any — a Swiss association 🇨🇭
-
-Licensed under [MIT](./LICENSE.md).
+1. The workflow detects the patch is "already in upstream", so subsequent
+   `mcp-enhance.N` builds become plain upstream builds (behavior unchanged —
+   they can keep serving as an image follower);
+2. Full cleanup: delete `patches/` and `release-mcp-enhance.yml`, restore
+   `release.yml` to the upstream version, delete the heart fork's patch
+   branches, and point compose.override back at the official image.

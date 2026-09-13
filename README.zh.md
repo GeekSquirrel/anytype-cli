@@ -1,4 +1,4 @@
-[English](README-MCP-ENHANCED.md) | [简体中文](README-MCP-ENHANCED.zh-CN.md)
+[English](README.md) | [简体中文](README.zh.md)
 
 > 双语版本需同步更新，改任一语言时请同步另一份。
 # 自托管补丁版（mcp-enhance）
@@ -76,12 +76,14 @@ CLI 把 `anytype-heart` 作为 Go 库引入并直接复用其 `core/api` HTTP �
 ```yaml
 services:
   anytype-cli:
-    image: ghcr.io/geeksquirrel/anytype-cli:vX.Y.Z-mcp-enhance.N
+    image: ghcr.io/geeksquirrel/anytype-cli:mcp-enhance
   anytype-cli_bootstrap:
-    image: ghcr.io/geeksquirrel/anytype-cli:vX.Y.Z-mcp-enhance.N
+    image: ghcr.io/geeksquirrel/anytype-cli:mcp-enhance
 ```
 
 然后 `docker compose pull anytype-cli anytype-cli_bootstrap && docker compose up -d anytype-cli`。
+
+移动 tag `mcp-enhance` 始终指向最新一次补丁构建；想冻结版本可改用具体的 `vX.Y.Z-mcp-enhance.N`。
 
 > 注意：GITHUB_TOKEN 推送的首个 ghcr 包默认是**私有**的。到 GitHub → Packages →
 > anytype-cli → Package settings 里改成 Public，否则部署机拉取需要先 `docker login ghcr.io`。
