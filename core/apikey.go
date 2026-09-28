@@ -9,8 +9,10 @@ import (
 	"github.com/anyproto/anytype-heart/pb/service"
 )
 
-// CreateAPIKey creates a new API key for local app access
-func CreateAPIKey(name string) (*pb.RpcAccountLocalLinkCreateAppResponse, error) {
+// CreateAPIKey creates a new API key for local app access.
+// scope may be AccountAuth_Limited or AccountAuth_JsonAPI; heart rejects
+// AccountAuth_Full here (Full is reserved for account-key sessions).
+func CreateAPIKey(name string, scope model.AccountAuthLocalApiScope) (*pb.RpcAccountLocalLinkCreateAppResponse, error) {
 	var resp *pb.RpcAccountLocalLinkCreateAppResponse
 
 	err := GRPCCall(func(ctx context.Context, client service.ClientCommandsClient) error {
@@ -18,6 +20,7 @@ func CreateAPIKey(name string) (*pb.RpcAccountLocalLinkCreateAppResponse, error)
 		resp, err = client.AccountLocalLinkCreateApp(ctx, &pb.RpcAccountLocalLinkCreateAppRequest{
 			App: &model.AccountAuthAppInfo{
 				AppName: name,
+				Scope:   scope,
 			},
 		})
 		if err != nil {
