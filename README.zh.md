@@ -1,100 +1,114 @@
 [English](README.md) | [简体中文](README.zh.md)
 
-> 双语版本需同步更新，改任一语言时请同步另一份。
-# 自托管补丁版（mcp-enhance）
+> 两个语言版本必须保持同步：更新任一版本时，同步更新另一个。
 
-这个 fork 在官方 anytype-cli 之上维护一套补丁集，让自托管（any-sync-dockercompose）
-部署的 anytype-cli 提前获得若干面向 agent / API 的能力增强，直到官方合并对应改动。
-补丁集由此得名：**mcp-enhance** —— 为 MCP / agent 工具面补全的能力。
+# anytype-cli —— v2 API 尝鲜版（api-v2）
 
-## 它改了什么
+本 fork 用比官方锁定版本更新的 `anytype-heart` 来构建官方
+[anytype-cli](https://github.com/anyproto/anytype-cli)，让自托管部署
+**现在就能用上 v2 API**。CLI 本身是未改动的上游代码，只前移了内嵌的
+heart 依赖，外加一项 v2 时代必需的密钥管理增强。
 
-CLI 把 `anytype-heart` 作为 Go 库引入并直接复用其 `core/api` HTTP 服务（容器 31012 端口），
-所以补丁本身完全在 heart 侧，本仓库只包含让构建用上补丁 heart 的机制：
+**退役路线**：一旦官方 anytype-cli 的 release 把 `anytype-heart` 锁到
+`>= v0.51.0`，官方镜像同样带 v2——届时切回官方镜像并退役本 fork 的
+workflow。
 
-| 文件 | 作用 |
-|---|---|
-| `patches/anytype-heart-mcp-enhance.patch` | 补丁集，基线记录在 `patches/heart-patch-base`（当前 `v0.50.20`）。功能明细见下节 |
-| `.github/workflows/release-mcp-enhance.yml` | 监控上游版本并自动构建发布补丁镜像 |
-| `.github/workflows/release.yml` | 与上游一致，仅禁用 tag 触发（避免与补丁 tag 冲突）并移除 Docker Hub / Slack 步骤（fork 无对应 secrets） |
+## 为什么有这个 fork
 
-## 补丁集功能明细
+| | 官方 anytype-cli | 本 fork |
+|---|---|---|
+| go.mod 锁定的 heart | `v0.50.20`（仅 v1 API） | `v0.51.3`（v1 + v2 API） |
+| heart 源码 | 未改动的 release | 未改动的 release |
+| CLI 源码 | 未改动 | + `apikey` 的 scope/grant 参数（见下） |
+| API 面 | `/v1/*` | `/v1/*` 和 `/v2/*` |
 
-### ① GO-3132：discussionId API（讨论区 Programmable）
+CLI 把 `anytype-heart` 作为 Go 库内嵌并复用其 `core/api` HTTP 服务（容器
+端口 31012），因此 API 版本完全由编译进去的 heart 版本决定。heart
+`v0.51.0` 发布了 v2 API（GO-7383）；官方 CLI 目前仍锁 `v0.50.20`。
 
-让 agent 能像人一样读写对象的内联讨论（评论）：
+## v2 API 新增能力（均在本构建上实测通过）
 
-- **v1 Object 模型暴露 `discussion_id`**：读取对象时能拿到其讨论区的 id
-  （`discussion_id` 不在上游 OpenAPI 规范内，是本补丁的扩展字段）；
-- **v1 ChatMessage 暴露 `blocks`**：聊天消息返回完整块结构，桌面端消息不再读出空文本；
-- **API 消息合成 text block**：通过 API 写入的消息在服务端合成 text block，
-  与桌面端发出的消息结构同构，`blocks` 成为所有消息的统一读取入口；
-- **讨论冷启动端点**：新增 `POST /v1/spaces/{space_id}/objects/{object_id}/discussion`，
-  agent 可自行为没有讨论区的对象创建讨论（上游仅在 UI 侧惰性创建）。
+- **完整的对象面**：`GET/POST/PATCH/DELETE /v2/spaces/{space_id}/objects/...`，
+  AnyBlock 文档形态（`formatVersion`/`properties`/`blocks`）、基于 etag 的
+  乐观并发（`If-Match`）、幂等键与 dry-run；
+- **原生内联讨论**：`POST /v2/spaces/{space_id}/objects/{object_id}/discussion`
+  可为任意对象冷启动讨论，对象读取自带 `discussion` chat id——无需补丁；
+- **搜索不依赖 v1**：`POST /v2/search`（跨空间）与
+  `POST /v2/spaces/{space_id}/search`；配合 queries、types、properties、
+  templates、members、widgets、files 端点，完整的 agent 工作流可以只跑在
+  v2 上；
+- **密钥自省**：`GET /v2/auth/whoami` 返回 key 的 scope 与空间授权；
+- 自描述契约：`/v2/docs/openapi.json`、`/v2/schemas`。
 
-### ② Rich-markdown 往返（anymark 解析补全）
+## 本 fork 的 CLI 增强
 
-修复"导出格式吃不回去"的读写不对称——此前导出器把 Mention 标记序列化成
-`anytype://` 链接、把 Mermaid 图序列化成 ` ```mermaid ` 围栏，但写入端解析器
-（anymark）不认识这两种形态，导致 **agent 通过 API 写的正文永远无法还原成
-真引用和真图表**（人走编辑器 RPC 不受影响）：
+heart v0.51.x 在 **/v2 上强制 key-scope 门禁**：没有 scope 的 key（
+`Limited`，旧 CLI 的默认值）在 v2 一律被拒，`/v1` 则继续放行。本 fork 把
+scope 和空间授权接入密钥命令：
 
-- **`anytype://object?objectId=…` 链接 → Mention 标记**：写入端解析时还原为
-  `BlockContentTextMark_Mention`（Param = objectId）。效果：对象链接图谱正确登记
-  （links / backlinks 双向可见，收集逻辑 `FillSmartIds` 只认 Mention/Object 标记）、
-  UI 中渲染为对象引用卡片；普通 https 链接与非 object 的 anytype:// 链接行为不变；
-- **` ```mermaid ` 围栏 → Latex 块**：解析为 `BlockContentLatex`（Processor=Mermaid），
-  与上游 Notion 导入器 `handleMermaidBlock` 的构造完全一致，客户端可正常渲染图表；
-  其余语言的代码围栏行为不变（仍是带 `lang` 字段的 Code 文本块）；
-- **往返测试护栏**：新增 `richmd_test.go`（mention 带参/无参、mermaid、普通链接、
-  普通代码围栏等回归用例），后续任何"导得出、吃不回"的块类型都应先加测试用例再修。
+```bash
+# JsonAPI scope：可调用 /v1 和 /v2
+anytype auth apikey create mcp --scope jsonapi
 
-补丁的可追溯源码分支：[GeekSquirrel/anytype-heart `GO-3132-v0.50.20-discussion-id`](https://github.com/GeekSquirrel/anytype-heart/tree/GO-3132-v0.50.20-discussion-id)
-（GO-3132 提交 + blocks 暴露 + anymark 往返补丁，基于 CLI 依赖的 heart v0.50.20）。
-较新的分支 `GO-3132-expose-discussion-id`（基于更新的上游树）同步维护同一套改动，
-作为将来 rebase 的前置参考。
+# 创建时把 key 收窄到指定空间
+anytype auth apikey create mcp --scope jsonapi \
+  --spaces bafyreidr2epoyudmzxf...,bafyreiedvs72vpdksf5... --perm readwrite
 
-## release-mcp-enhance.yml 工作方式
+# 或者所有空间（动态，含未来新建的空间）
+anytype auth apikey create mcp --scope jsonapi --all-spaces --perm read
 
-1. 每 30 分钟（cron）或手动（workflow_dispatch）解析要构建的 CLI 版本：
-   手动输入 > 官方 [any-sync-dockercompose](https://github.com/anyproto/any-sync-dockercompose)
-   `.env.example` 中钉住的具体版本 > **上游 anytype-cli 最新已发布的 release**（`.env` 为 `latest` 时的默认监控源，Releases API 查询，不含 prerelease）。
-2. 若该版本已有 `vX.Y.Z-mcp-enhance.N` tag 则跳过（`force=true` 可强制追加新编号）。
-   注：命名从 `vX.Y.Z-discussion.N` 迁移而来，旧 tag 不参与计数，新编号从 .1 重新起算。
-3. 从该 CLI 版本的 `go.mod` 解析其依赖的 heart 版本（tag 或伪版本自动转 commit SHA），
-   检出**上游** anytype-heart 对应版本并应用补丁集
-   （已包含于上游则自动跳过补丁；上下文漂移时用 `git apply -3` 兜底；补丁失配或编译失败都会
-   硬失败、不发布镜像，等待手动 rebase `patches/` 后重跑）。
-4. `go mod replace` 指向补丁 heart，按上游同款 alpine/musl 流程静态编译 linux amd64 + arm64，
-   推送镜像 `ghcr.io/geeksquirrel/anytype-cli:vX.Y.Z-mcp-enhance.N` 和移动 tag `mcp-enhance`，
-   并创建同名 GitHub Release（附 linux 二进制）。
+# 事后原地修改 grant：key 字符串不变，客户端无需重新配置；
+# heart 会清掉会话缓存，新 grant 立即生效
+anytype auth apikey grant <appHash> --spaces <id,id,...> --perm read
+anytype auth apikey grant <appHash> --clear     # 恢复全空间访问
+
+# 列表现在带 SCOPE / GRANT 列
+anytype auth apikey list
+```
+
+继承自 heart 的规则：grant 只存在于 `JsonAPI` key 上（`Limited` 不能带
+grant；`Full` 保留给账号密钥会话，不可铸造）；`--spaces` 与
+`--all-spaces` 互斥。
+
+## 发布
+
+`.github/workflows/release-api-v2.yml` 是手动触发（workflow_dispatch）的
+构建：按上游 alpine 流程产出 linux amd64 + arm64 静态 musl 二进制，推送
+多架构镜像到 ghcr。镜像 tag 为 input，默认 `api-v2`：
+
+```
+ghcr.io/geeksquirrel/anytype-cli:api-v2
+```
 
 ## 在 any-sync-dockercompose 中使用
 
-在部署目录建 `docker-compose.override.yml`：
-
 ```yaml
+# docker-compose.override.yml
 services:
   anytype-cli:
-    image: ghcr.io/geeksquirrel/anytype-cli:mcp-enhance
+    image: ghcr.io/geeksquirrel/anytype-cli:api-v2
   anytype-cli_bootstrap:
-    image: ghcr.io/geeksquirrel/anytype-cli:mcp-enhance
+    image: ghcr.io/geeksquirrel/anytype-cli:api-v2
 ```
 
 然后 `docker compose pull anytype-cli anytype-cli_bootstrap && docker compose up -d anytype-cli`。
 
-移动 tag `mcp-enhance` 始终指向最新一次补丁构建；想冻结版本可改用具体的 `vX.Y.Z-mcp-enhance.N`。
+> 首次用 GITHUB_TOKEN 推送的 ghcr 包默认是**私有**的。请到
+> GitHub → Packages → anytype-cli → Package settings 切换为 Public，否则
+> 部署机拉取前需要先 `docker login ghcr.io`。
 
-> 注意：GITHUB_TOKEN 推送的首个 ghcr 包默认是**私有**的。到 GitHub → Packages →
-> anytype-cli → Package settings 里改成 Public，否则部署机拉取需要先 `docker login ghcr.io`。
+## 旧的 mcp-enhance 补丁线
 
-> 从旧 `discussion` 镜像 tag 迁移：新镜像的移动 tag 是 `mcp-enhance`，
-> compose.override 里的镜像引用需同步更新。
+在 v2 出现之前，本 fork 曾在 heart v0.50.20 上维护 **mcp-enhance** 补丁集
+（`patches/`、`release-mcp-enhance.yml`），为 v1 API 补充讨论与富文本
+markdown 能力。v2 API 已原生覆盖其主要功能（对象 `discussion` 字段、讨论
+冷启动、聊天消息读取）；该补丁线仍服务于 v1 时代部署，上游跟进后同样
+退役。
 
-## 上游合并后如何退役
+## 上游跟进后的退役步骤
 
-补丁集对应的改动被官方合并并发布后：
-
-1. workflow 检测到补丁"已包含于上游"，之后发布的 `mcp-enhance.N` 就是纯净上游构建（行为不变，可继续当镜像跟随器用）；
-2. 彻底清理：删除 `patches/`、`release-mcp-enhance.yml`，恢复 `release.yml` 为上游版本，
-   删除 heart fork 的补丁分支，compose.override 改回官方镜像。
+1. 关注官方 anytype-cli 的 release；当某个版本把 `anytype-heart` 锁到
+   `>= v0.51.0`，官方镜像即原生带 v2；
+2. 删除 `release-api-v2.yml`（以及旧的 `release-mcp-enhance.yml` /
+   `patches/`），把 `release.yml` 恢复为上游版本，并将
+   `docker-compose.override.yml` 指回官方镜像。

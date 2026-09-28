@@ -12,7 +12,9 @@ import (
 // CreateAPIKey creates a new API key for local app access.
 // scope may be AccountAuth_Limited or AccountAuth_JsonAPI; heart rejects
 // AccountAuth_Full here (Full is reserved for account-key sessions).
-func CreateAPIKey(name string, scope model.AccountAuthLocalApiScope) (*pb.RpcAccountLocalLinkCreateAppResponse, error) {
+// grant (JsonAPI keys only) narrows the key to a set of spaces; nil means
+// unrestricted access to every space.
+func CreateAPIKey(name string, scope model.AccountAuthLocalApiScope, grant *model.AccountAuthAppGrant) (*pb.RpcAccountLocalLinkCreateAppResponse, error) {
 	var resp *pb.RpcAccountLocalLinkCreateAppResponse
 
 	err := GRPCCall(func(ctx context.Context, client service.ClientCommandsClient) error {
@@ -21,6 +23,7 @@ func CreateAPIKey(name string, scope model.AccountAuthLocalApiScope) (*pb.RpcAcc
 			App: &model.AccountAuthAppInfo{
 				AppName: name,
 				Scope:   scope,
+				Grant:   grant,
 			},
 		})
 		if err != nil {
@@ -69,6 +72,28 @@ func RevokeAPIKey(appId string) error {
 		}
 
 		if resp.Error != nil && resp.Error.Code != pb.RpcAccountLocalLinkRevokeAppResponseError_NULL {
+			return fmt.Errorf("API error: %s", resp.Error.Description)
+		}
+
+		return nil
+	})
+}
+
+// UpdateAPIKeyGrant replaces the space grant of an existing key in place.
+// The key string never changes and heart evicts its HTTP session cache, so
+// the new grant applies from the next request. A nil grant clears the
+// scoping (back to every-space access).
+func UpdateAPIKeyGrant(appHash string, grant *model.AccountAuthAppGrant) error {
+	return GRPCCall(func(ctx context.Context, client service.ClientCommandsClient) error {
+		resp, err := client.AccountLocalLinkUpdateApp(ctx, &pb.RpcAccountLocalLinkUpdateAppRequest{
+			AppHash: appHash,
+			Grant:   grant,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update API key grant: %w", err)
+		}
+
+		if resp.Error != nil && resp.Error.Code != pb.RpcAccountLocalLinkUpdateAppResponseError_NULL {
 			return fmt.Errorf("API error: %s", resp.Error.Description)
 		}
 

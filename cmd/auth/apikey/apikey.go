@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	apiKeyCreateCmd "github.com/anyproto/anytype-cli/cmd/auth/apikey/create"
+	apiKeyGrantCmd "github.com/anyproto/anytype-cli/cmd/auth/apikey/grant"
 	apiKeyListCmd "github.com/anyproto/anytype-cli/cmd/auth/apikey/list"
 	apiKeyRevokeCmd "github.com/anyproto/anytype-cli/cmd/auth/apikey/revoke"
 )
@@ -18,6 +19,7 @@ func NewApiKeyCmd() *cobra.Command {
 
 	// Add subcommands
 	cmd.AddCommand(apiKeyCreateCmd.NewCreateCmd())
+	cmd.AddCommand(apiKeyGrantCmd.NewGrantCmd())
 	cmd.AddCommand(apiKeyListCmd.NewListCmd())
 	cmd.AddCommand(apiKeyRevokeCmd.NewRevokeCmd())
 

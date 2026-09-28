@@ -35,8 +35,8 @@ func NewListCmd() *cobra.Command {
 			})
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tID\tKEY\tCREATED")
-			fmt.Fprintln(w, "----\t--\t---\t----------")
+			fmt.Fprintln(w, "NAME\tID\tKEY\tSCOPE\tGRANT\tCREATED")
+			fmt.Fprintln(w, "----\t--\t---\t-----\t-----\t----------")
 
 			for _, app := range resp.App {
 				createdAt := time.Unix(app.CreatedAt, 0).Format("2006-01-02 15:04:05")
@@ -44,7 +44,7 @@ func NewListCmd() *cobra.Command {
 				if len(shortKey) > 8 {
 					shortKey = shortKey[:8] + "..."
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", app.AppName, app.AppHash, shortKey, createdAt)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", app.AppName, app.AppHash, shortKey, app.Scope.String(), core.DescribeGrant(app.Grant), createdAt)
 			}
 
 			w.Flush()
